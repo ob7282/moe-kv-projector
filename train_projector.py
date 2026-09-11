@@ -151,7 +151,8 @@ def train_and_compare(epochs=10):
     print(f"Dense Linear Projector:  MSE = {dense_mse:.5f} | Cosine Alignment = {dense_cos*100:.2f}% (Time: {time_dense:.1f}s)")
     print(f"Expert-Linked MoE Model: MSE = {moe_mse:.5f} | Cosine Alignment = {moe_cos*100:.2f}% (Time: {time_moe:.1f}s)")
     
-    print(f"\n[RESULT] Relative Error Difference: {error_reduction:.1f}%")
+    error_reduction = ((dense_mse - moe_mse) / max(dense_mse, 1e-9)) * 100
+    print(f"\n[RESULT] Error Reduction via Expert-Linked MoE: {error_reduction:.1f}% lower error vs Dense")
 
 if __name__ == "__main__":
     train_and_compare(epochs=5)

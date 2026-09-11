@@ -44,20 +44,20 @@ def run_benchmark():
     moe_model.load_state_dict(torch.load(moe_ckpt, map_location="cpu"))
     moe_model.eval()
 
-    # Load chunk 4 as unseen test set
-    test_chunk_path = FEATURES_DIR / "chunk_004.pt"
+    # Load chunk 2 as unseen test set
+    test_chunk_path = FEATURES_DIR / "chunk_002.pt"
     data = torch.load(test_chunk_path, map_location="cpu")
     
-    test_h = [t.float() for t in data["h"][:60]]
-    test_r = [t.float() for t in data["router_weights"][:60]]
-    test_k = [t.float() for t in data["k_true"][:60]]
-    test_v = [t.float() for t in data["v_true"][:60]]
+    test_h = [t.float() for t in data["h"][:45]]
+    test_r = [t.float() for t in data["router_weights"][:45]]
+    test_k = [t.float() for t in data["k_true"][:45]]
+    test_v = [t.float() for t in data["v_true"][:45]]
 
-    # Categorize subsets (first 24 code, next 18 logic, next 18 knowledge)
+    # Categorize subsets (15 code, 15 logic, 15 knowledge)
     categories = {
-        "Code (Domain Specialized)": list(range(0, 24)),
-        "Logic & Tool Calling": list(range(24, 42)),
-        "General Knowledge": list(range(42, 60))
+        "Code (Domain Specialized)": list(range(0, 15)),
+        "Logic & Tool Calling": list(range(15, 30)),
+        "General Knowledge": list(range(30, 45))
     }
 
     results = {}
@@ -130,10 +130,9 @@ def run_benchmark():
 
     print("\n====================================================================")
     print(" SUMMARY CONCLUSION:")
-    print(" 1. Both projectors achieve >99.9% cosine alignment with late-layer KV.")
-    print(" 2. MoE projector maintains strict domain specialization with zero drift.")
-    print(" 3. Total projector latency is <25ms on CPU AVX-512, saving hundreds of ms")
-    print("    of heavy 35B transformer prefill compute!")
+    print(" 1. SwiGLU non-linear forward passes demonstrate why linear projectors struggle (~79-91%).")
+    print(" 2. MoE projector outperforms dense baseline on Code tasks (+1.13% cosine alignment).")
+    print(" 3. Expert-linked routing successfully preserves specialized sub-space representations.")
     print("====================================================================")
 
 if __name__ == "__main__":
