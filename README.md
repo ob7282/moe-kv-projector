@@ -1,6 +1,6 @@
 # Expert-Linked MoE KV Projector (LLKVApprox-MoE)
 
-> **Decoupling Prefill Compute from Model Depth in Mixture-of-Experts via Co-Routed Low-Rank KV Synthesis**
+> **Extending Late-Layer KV Approximation to Mixture-of-Experts Models via Co-Routed Low-Rank Projectors**
 
 [![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
 [![PyTorch 2.x](https://img.shields.io/badge/PyTorch-2.x-orange.svg)](https://pytorch.org/)
@@ -8,24 +8,31 @@
 
 ---
 
-## 💡 Motivation & Background
+## 🙏 Credits & Prior Work
 
-During prompt ingestion (**prefill**), modern decoder-only transformers must evaluate every prompt token through every single layer (e.g., 48 to 64 layers) to construct the Key-Value (KV) attention cache. For long contexts, prefill accounts for the vast majority of time-to-first-token (TTFT) and compute energy.
+This research directly builds upon the work and experiments of **Naoki Kishida** ([@kis on X](https://x.com/kis), [@nowokay on Hatena](https://nowokay.hatenablog.com/)), specifically his post:
+* **[DeepSeek-V4.1-FlashがEncoder-Decoderと呼んでいる後半層KV近似をQwen3で試してPrefill時間を半分にする](https://nowokay.hatenablog.com/entry/2026/09/11/120001)** (September 11, 2026).
 
-Recently, architectures like **DeepSeek-V4.1-Flash** and community research by **Naoki Kishida** ([LLKVApprox](https://nowokay.hatenablog.com/entry/2026/09/11/120001)) demonstrated that prefill can be drastically accelerated by computing only the early layers normally, then using a lightweight approximation projector to predict the KV states of the late layers. During token generation (**decode**), all layers run normally.
-
-### The Problem: Representation Collapse on Code & Reasoning
-When a **single monolithic (dense) projector** is used, all tokens pass through the same static weights. In experiments on `Qwen3-8B`, this causes **representation collapse on coding tasks**: subtle structural invariants (variable scopes, bracket matching, type hints) are blurred, resulting in hallucinated variables and syntax errors.
-
-In **Mixture-of-Experts (MoE)** models like `Qwen 3.6 35B A3B`, late layers are comprised of dozens of **highly differentiated sparse experts**. Forcing these specialized pathways through one static matrix destroys expert specialization.
+Kishida demonstrated that during prompt prefill, calculating activations for early layers and using a small projector to synthesize Key-Value (KV) cache states for later layers can cut prefill time in half on `Qwen3-8B`. This project explores how that principle can be adapted to **Mixture-of-Experts (MoE)** models such as `Qwen 3.6 35B A3B`.
 
 ---
 
-## 🧬 The Solution: Expert-Linked MoE KV Projector
+## 💡 Background & Motivation
 
-This repository implements the **Expert-Linked MoE Key-Value Projector**:
+During prompt ingestion (**prefill**), decoder-only models compute attention through all layers (e.g., 48 to 64 layers) to construct the initial KV cache. For long contexts, prefill can become a primary compute bottleneck.
 
-Instead of one generic projector, the projector itself is structured as an **MoE of low-rank micro-experts** paired directly with the experts in the base model:
+Kishida's proof-of-concept on `Qwen3-8B` showed that a lightweight projector can reconstruct late-layer KV states effectively for natural language prose, but noted that **coding tasks showed degradation** (such as hallucinating extra variables or syntax drift) when using a single monolithic linear projector.
+
+### Applying the Concept to MoE Architectures
+In dense models, all layers apply uniform weights across all tokens. In **Mixture-of-Experts (MoE)** models like `Qwen 3.6 35B A3B`, however, late layers contain dozens of **specialized sparse experts** (e.g., experts specialized in code syntax, mathematical reasoning, or multilingual text).
+
+If a single monolithic projector is applied to an MoE model, it averages across these distinct expert activations. This experiment tests whether structuring the projector itself as an **MoE of low-rank micro-experts linked to the base model's router** helps preserve domain specialization during late-layer KV synthesis.
+
+---
+
+## 🧬 Architecture: Co-Routed Micro-Experts
+
+Rather than using one generic linear projection matrix, this approach creates a collection of lightweight **low-rank micro-experts** ($r=32$):
 
 ```
                       [Prompt Tokens]
@@ -35,7 +42,7 @@ Instead of one generic projector, the projector itself is structured as an **MoE
                ▼ Hidden State (H_24) & Router Logits (R_24)
                              │
      ┌───────────────────────┴───────────────────────┐
-     │           Co-Routing Router Linking           │
+     │           Router Linking / Co-Routing         │
      │      (Inherits Gate Decisions from Base)      │
      └───────────────────────┬───────────────────────┘
                              │
@@ -52,16 +59,16 @@ Instead of one generic projector, the projector itself is structured as an **MoE
          [Complete KV Cache -> Full-Quality Decode Across All 48 Layers]
 ```
 
-### Key Architectural Advantages:
-1. **Zero New Router Overhead (Co-Routing):** The micro-experts directly inherit the gating decisions ($R_{split}$) already computed by the parent model.
-2. **Domain Preservation:** Tokens routed to code experts activate code micro-projectors; tokens routed to math activate math micro-projectors.
-3. **Ultra-Low Active Compute:** While the projector fleet contains 64 to 128 micro-experts, **only 8 micro-experts activate per token** (~17.5M active parameters), adding negligible arithmetic overhead (<1% of prefill FLOPs).
+### Key Design Elements:
+1. **Router Gating Inheritance:** The micro-experts use the router gating decisions ($R_{24}$) already produced by the base model, adding no extra routing overhead.
+2. **Domain Separation:** Tokens routed to code-focused experts activate code micro-projectors, helping preserve structured syntax in the reconstructed KV states.
+3. **Low Active Parameter Overhead:** Out of the 64 micro-experts, only **8 activate per token** (~17.5M active parameters), which is a negligible fraction of the base model's active compute.
 
 ---
 
-## 📊 Empirical Verification & Results
+## 📊 Experimental Results
 
-We trained and evaluated the **Expert-Linked MoE Projector** alongside a **Monolithic Dense Linear Projector** on a curated multi-domain corpus (40% Code, 30% Logic/Tools, 30% Knowledge):
+We trained both a **Dense Linear Projector** (following Kishida's baseline) and the **Expert-Linked MoE Projector** on an identical multi-domain prompt dataset (40% Code, 30% Logic/Tools, 30% General Knowledge):
 
 ### 1. Reconstruction Cosine Alignment by Domain (Unseen Test Set)
 
@@ -71,34 +78,34 @@ We trained and evaluated the **Expert-Linked MoE Projector** alongside a **Monol
 | 🛠️ **Logic & Tool Calling** | 99.96% | **99.94%** | **0.00251** |
 | 📚 **General Knowledge** | 99.96% | **99.94%** | **0.00247** |
 
-### 2. Efficiency Metrics (512-token prompt)
-* **Late-Layer Compute Reduction:** **~48.2%** of transformer block prefill compute bypassed.
+### 2. Efficiency Characteristics (512-token prompt)
+* **Late-Layer Prefill Bypassed:** **~48.2%** of transformer block prefill compute bypassed (Layers 25–48).
 * **Active Parameters per Token:** **17.5M** (top-8 micro-experts out of 64).
-* **Projector Inference Latency:** **<25 ms** on modern AVX-512 CPU execution.
+* **Projector Latency:** **<25 ms** on modern AVX-512 CPU execution.
 
 ---
 
 ## 🚀 Getting Started
 
 ### 1. Installation
-Clone the repository and install dependencies with `uv` (or standard `pip`):
+Clone the repository and install dependencies with `uv` or `pip`:
 
 ```bash
 git clone https://github.com/ob7282/moe-kv-projector.git
 cd moe-kv-projector
 
-# Using uv (recommended)
+# Using uv
 uv venv .venv
 uv pip install torch numpy tqdm
 ```
 
 ### 2. Generate Curated Dataset
-Generate the balanced 3,000-prompt training corpus:
+Generate the 3,000-prompt training corpus:
 ```bash
 python dataset_builder.py
 ```
 
-### 3. Harvest Aligned Feature Activations
+### 3. Harvest Feature Activations
 Extract early-layer activations, router probabilities, and ground-truth late KV tensors:
 ```bash
 python harvest_features.py
@@ -123,9 +130,9 @@ python benchmark_inference.py
 ```
 moe-kv-projector/
 ├── .gitignore                # Filters binary tensors and checkpoints
-├── README.md                 # Project documentation & benchmark analysis
+├── README.md                 # Project documentation & credits
 ├── config.py                 # Hyperparameters (dimensions, rank, layers)
-├── dataset_builder.py        # Curates balanced multi-domain dataset
+├── dataset_builder.py        # Generates balanced multi-domain dataset
 ├── harvest_features.py       # Extracts chunked FP16 activation tensors
 ├── model_projector.py        # PyTorch implementations of Dense & MoE projectors
 ├── train_projector.py        # Training and comparison loop (AdamW + Cosine loss)
@@ -136,6 +143,6 @@ moe-kv-projector/
 
 ---
 
-## 📜 Citation & License
+## 📜 License
 
-MIT License. Designed and developed as an open research experiment in accelerating MoE prefill.
+MIT License. Designed and developed as an open research experiment extending late-layer KV approximation to MoE architectures.
