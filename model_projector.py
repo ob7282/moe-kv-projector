@@ -31,41 +31,58 @@ class DenseLinearProjector(nn.Module):
         return k_pred, v_pred
 
 
-class MicroExpert(nn.Module):
+class DeepSpecialistExpert(nn.Module):
     """
-    Individual non-linear micro-expert paired 1:1 with a base model expert.
-    Features decoupled K and V latent bottlenecks to eliminate cross-subspace interference.
+    Deep 2-layer non-linear specialist expert with internal residual connections
+    and decoupled K and V pathways. Operates as a precision residual corrector
+    for complex AST, syntax, and domain structures.
     """
     def __init__(self, d_model=D_MODEL, d_kv=TOTAL_TARGET_KV_DIM, rank=PROJECTOR_RANK):
         super().__init__()
-        # Dedicated Key projection pipeline (retrieval address subspace)
+        # Key pathway: down -> mid (residual) -> up
         self.down_k = nn.Linear(d_model, rank, bias=False)
+        self.mid_k = nn.Linear(rank, rank, bias=False)
         self.up_k = nn.Linear(rank, d_kv, bias=False)
-        self.act_k = nn.GELU()
+        self.act_k1 = nn.GELU()
+        self.act_k2 = nn.GELU()
 
-        # Dedicated Value projection pipeline (information content subspace)
+        # Value pathway: down -> mid (residual) -> up
         self.down_v = nn.Linear(d_model, rank, bias=False)
+        self.mid_v = nn.Linear(rank, rank, bias=False)
         self.up_v = nn.Linear(rank, d_kv, bias=False)
-        self.act_v = nn.GELU()
+        self.act_v1 = nn.GELU()
+        self.act_v2 = nn.GELU()
 
         nn.init.kaiming_uniform_(self.down_k.weight, a=math.sqrt(5))
         nn.init.kaiming_uniform_(self.down_v.weight, a=math.sqrt(5))
-        nn.init.normal_(self.up_k.weight, std=0.02)
-        nn.init.normal_(self.up_v.weight, std=0.02)
+        nn.init.kaiming_uniform_(self.mid_k.weight, a=math.sqrt(5))
+        nn.init.kaiming_uniform_(self.mid_v.weight, a=math.sqrt(5))
+        # Small initialization so specialists start as additive zero-centered residual correctors
+        nn.init.normal_(self.up_k.weight, std=0.005)
+        nn.init.normal_(self.up_v.weight, std=0.005)
 
     def forward(self, h):
-        z_k = self.act_k(self.down_k(h))
-        z_v = self.act_v(self.down_v(h))
+        # Key transformation with residual skip
+        z_k1 = self.act_k1(self.down_k(h))
+        z_k = self.act_k2(self.mid_k(z_k1)) + z_k1
         k = self.up_k(z_k)
+
+        # Value transformation with residual skip
+        z_v1 = self.act_v1(self.down_v(h))
+        z_v = self.act_v2(self.mid_v(z_v1)) + z_v1
         v = self.up_v(z_v)
+
         return k, v
+
+MicroExpert = DeepSpecialistExpert  # Backward compatibility alias
 
 
 class ExpertLinkedMoEKVProjector(nn.Module):
     """
-    Expert-Linked MoE KV Projector.
-    Routes token representations to the corresponding micro-experts based on
-    the base model's router weights, preserving code and domain specialization.
+    Hybrid Shared-Base + Deep-Specialist MoE Projector.
+    Combines:
+    1. Full-capacity 1.0x Dense Shared Base (covers broad language and general knowledge)
+    2. Deep 2-layer Non-linear Specialist Fleet (provides precision AST/code residual corrections)
     """
     def __init__(
         self,
@@ -74,7 +91,7 @@ class ExpertLinkedMoEKVProjector(nn.Module):
         num_experts=NUM_EXPERTS,
         top_k=TOP_K_EXPERTS,
         rank=PROJECTOR_RANK,
-        bypass_scale=0.5
+        bypass_scale=1.0
     ):
         super().__init__()
         self.num_experts = num_experts
@@ -83,15 +100,15 @@ class ExpertLinkedMoEKVProjector(nn.Module):
         self.bypass_scale = bypass_scale
         self.norm = nn.LayerNorm(d_model)
         
-        # Shared global base bypass
+        # Full-capacity 1.0x shared base projector
         self.shared_bypass_k = nn.Linear(d_model, d_kv, bias=False)
         self.shared_bypass_v = nn.Linear(d_model, d_kv, bias=False)
         nn.init.normal_(self.shared_bypass_k.weight, std=0.02)
         nn.init.normal_(self.shared_bypass_v.weight, std=0.02)
 
-        # Scaled micro-experts fleet
+        # Deep specialist fleet
         self.experts = nn.ModuleList([
-            MicroExpert(d_model, d_kv, rank=rank) for _ in range(num_experts)
+            DeepSpecialistExpert(d_model, d_kv, rank=rank) for _ in range(num_experts)
         ])
 
         # Learnable per-expert adaptive gain
@@ -105,7 +122,7 @@ class ExpertLinkedMoEKVProjector(nn.Module):
         B, T, D = h.shape
         h_norm = self.norm(h)
         
-        # Scaled base shared representation
+        # Full-capacity 1.0x base shared representation
         base_k = self.bypass_scale * self.shared_bypass_k(h_norm)
         base_v = self.bypass_scale * self.shared_bypass_v(h_norm)
 

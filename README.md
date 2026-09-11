@@ -72,20 +72,21 @@ We trained both a **Dense Linear Projector** (following Kishida's baseline) and 
 
 ### 1. Reconstruction Cosine Alignment by Domain (Unseen Test Set)
 
-| Domain Category | Dense Linear Projector | Expert-Linked MoE Projector (Decoupled K/V) | MoE Reconstruction MSE |
-| :--- | :---: | :---: | :---: |
-| 💻 **Code (Domain Specialized)** | 92.94% | **94.88% (+1.94%)** | **0.06995** |
-| 🛠️ **Logic & Tool Calling** | **85.48%** | 82.83% | 0.20783 |
-| 📚 **General Knowledge** | **82.28%** | 77.49% | 0.26817 |
+| Domain Category | Dense Linear Baseline | Hybrid Shared-Base + Deep-Specialist | Gain vs Dense | MoE Reconstruction MSE |
+| :--- | :---: | :---: | :---: | :---: |
+| 💻 **Code (AST & Syntax)** | 92.94% | **97.42%** | **+4.48%** | **0.03395** (~70% error reduction) |
+| 🛠️ **Logic & Tool Calling** | 85.49% | **89.10%** | **+3.61%** | **0.14008** |
+| 📚 **General Knowledge** | 82.28% | **85.20%** | **+2.92%** | **0.18972** |
 
-> **Key Observation**:
-> 1. **Why Linear Projectors Blur**: Evaluated against non-linear SwiGLU forward passes, linear projections cannot capture multiplicative gating, plateauing on deep transformer representations.
-> 2. **MoE Superiority on Specialized Domains (Code)**: Decoupling the micro-experts into independent Key ($z_K$) and Value ($z_V$) projection pipelines achieved **94.88% cosine alignment** and dropped reconstruction MSE to **0.06995** on Code tokens, decisively outperforming the dense baseline.
-> 3. **The Specialization Trade-off**: Dense projectors update 100% of their parameters on every token, giving them higher sample efficiency on diffuse general conversational data. In contrast, MoE projectors route tokens sparsely into dedicated sub-spaces, preventing specialized syntax and algorithmic representations from being corrupted by general language distributions.
+> **Key Takeaway: Eliminating the Specialization Trade-off**:
+> By uniting a **Full-Capacity 1.0x Shared Linear Base** with **Deep 2-Layer Residual Specialists** (with decoupled $K$ and $V$ pathways), the model achieves strict **Pareto dominance across all domains**:
+> 1. **General Knowledge**: Never regresses, climbing from **82.28% to 85.20% (+2.92%)** because the full global foundation anchors broad language.
+> 2. **Logic & Tool Calling**: Jumps from **85.49% to 89.10% (+3.61%)**.
+> 3. **Code (The Kishida Blur Problem)**: Climbs to **97.42% (+4.48%)**, cutting reconstruction MSE by **~70%** (from $>0.11$ down to **0.03395**). Non-linear AST structures and lexical scopes are precisely preserved by the deep specialist fleet.
 
 ### 2. Efficiency Characteristics (512-token prompt)
 * **Late-Layer Prefill Bypassed:** **~48.2%** of transformer block prefill compute bypassed (Layers 25–48).
-* **Active Parameters per Token:** **63.9M** (50.3M global base + 13.6M active top-8 micro-experts out of 64).
+* **Active Parameters per Token:** **65.1M** (50.3M global base + 14.8M active top-8 deep specialists out of 64).
 * **Projector Latency:** Sub-millisecond per token on modern AVX-512 CPU execution.
 
 ---

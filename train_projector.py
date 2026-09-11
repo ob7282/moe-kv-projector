@@ -111,14 +111,21 @@ def train_and_compare(epochs=10):
     torch.save(dense_model.state_dict(), MODELS_DIR / "dense_projector.pt")
 
     print("\n=======================================================")
-    print(" 2. TRAINING EXPERT-LINKED MoE PROJECTOR (Our Architecture)")
+    print(" 2. TRAINING HYBRID SHARED-BASE + DEEP SPECIALISTS")
     print("=======================================================")
     moe_model = ExpertLinkedMoEKVProjector()
+    
+    # Warm-start 1.0x shared base from trained dense foundation
+    moe_model.shared_bypass_k.weight.data.copy_(dense_model.proj_k.weight.data)
+    moe_model.shared_bypass_v.weight.data.copy_(dense_model.proj_v.weight.data)
+    moe_model.norm.load_state_dict(dense_model.norm.state_dict())
+    print("[INIT] Warm-started 1.0x Shared Base from trained Dense Projector foundation.")
+
     expert_params = [p for exp in moe_model.experts for p in exp.parameters()]
     base_params = list(moe_model.shared_bypass_k.parameters()) + list(moe_model.shared_bypass_v.parameters()) + list(moe_model.norm.parameters()) + [moe_model.expert_gain]
     optimizer_moe = torch.optim.AdamW([
-        {'params': base_params, 'lr': LEARNING_RATE},
-        {'params': expert_params, 'lr': LEARNING_RATE * 2.0}
+        {'params': base_params, 'lr': 1e-5},
+        {'params': expert_params, 'lr': 4e-4}
     ], weight_decay=WEIGHT_DECAY)
     
     start_moe = time.time()
