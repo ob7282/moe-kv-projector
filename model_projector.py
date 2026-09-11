@@ -33,18 +33,19 @@ class DenseLinearProjector(nn.Module):
 
 class MicroExpert(nn.Module):
     """
-    Individual low-rank micro-expert paired 1:1 with a base model expert.
+    Individual non-linear micro-expert paired 1:1 with a base model expert.
+    Uses GELU activation with scaled projection bottleneck.
     """
     def __init__(self, d_model=D_MODEL, d_kv=TOTAL_TARGET_KV_DIM, rank=PROJECTOR_RANK):
         super().__init__()
         self.down = nn.Linear(d_model, rank, bias=False)
         self.up_k = nn.Linear(rank, d_kv, bias=False)
         self.up_v = nn.Linear(rank, d_kv, bias=False)
-        self.act = nn.SiLU()
+        self.act = nn.GELU()
 
         nn.init.kaiming_uniform_(self.down.weight, a=math.sqrt(5))
-        nn.init.normal_(self.up_k.weight, std=0.01)
-        nn.init.normal_(self.up_v.weight, std=0.01)
+        nn.init.normal_(self.up_k.weight, std=0.02)
+        nn.init.normal_(self.up_v.weight, std=0.02)
 
     def forward(self, h):
         z = self.act(self.down(h))
@@ -65,20 +66,23 @@ class ExpertLinkedMoEKVProjector(nn.Module):
         d_kv=TOTAL_TARGET_KV_DIM,
         num_experts=NUM_EXPERTS,
         top_k=TOP_K_EXPERTS,
-        rank=PROJECTOR_RANK
+        rank=PROJECTOR_RANK,
+        bypass_scale=0.5
     ):
         super().__init__()
         self.num_experts = num_experts
         self.top_k = top_k
+        self.rank = rank
+        self.bypass_scale = bypass_scale
         self.norm = nn.LayerNorm(d_model)
         
-        # Shared low-frequency global bypass
+        # Shared global base bypass
         self.shared_bypass_k = nn.Linear(d_model, d_kv, bias=False)
         self.shared_bypass_v = nn.Linear(d_model, d_kv, bias=False)
         nn.init.normal_(self.shared_bypass_k.weight, std=0.02)
         nn.init.normal_(self.shared_bypass_v.weight, std=0.02)
 
-        # Micro-experts fleet
+        # Scaled micro-experts fleet
         self.experts = nn.ModuleList([
             MicroExpert(d_model, d_kv, rank=rank) for _ in range(num_experts)
         ])
@@ -91,12 +95,12 @@ class ExpertLinkedMoEKVProjector(nn.Module):
         B, T, D = h.shape
         h_norm = self.norm(h)
         
-        # Base shared representation
-        base_k = self.shared_bypass_k(h_norm)
-        base_v = self.shared_bypass_v(h_norm)
+        # Scaled base shared representation
+        base_k = self.bypass_scale * self.shared_bypass_k(h_norm)
+        base_v = self.bypass_scale * self.shared_bypass_v(h_norm)
 
         if router_weights is None:
-            # Fallback to uniform top-k if router weights omitted
+            # Fallback to base representation if router weights omitted
             return base_k, base_v
 
         # Extract top-k active experts and normalized weights

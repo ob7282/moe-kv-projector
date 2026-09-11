@@ -32,7 +32,7 @@ TOTAL_TARGET_KV_DIM = TARGET_LAYERS * D_KV_PER_LAYER  # 12,288 total late KV fea
 # MoE Router & Micro-Expert Hyperparameters
 NUM_EXPERTS = 64            # Number of routed experts
 TOP_K_EXPERTS = 8           # Top-K active experts per token
-PROJECTOR_RANK = 32         # Low-rank bottleneck dimension for each micro-expert
+PROJECTOR_RANK = 64         # Scaled bottleneck dimension for each micro-expert
 
 # Training Hyperparameters
 BATCH_SIZE = 16

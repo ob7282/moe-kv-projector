@@ -72,21 +72,21 @@ We trained both a **Dense Linear Projector** (following Kishida's baseline) and 
 
 ### 1. Reconstruction Cosine Alignment by Domain (Unseen Test Set)
 
-| Domain Category | Dense Linear Projector | Expert-Linked MoE Projector | MoE Reconstruction MSE |
+| Domain Category | Dense Linear Projector | Expert-Linked MoE Projector (Rank 64) | MoE Reconstruction MSE |
 | :--- | :---: | :---: | :---: |
-| 💻 **Code (Domain Specialized)** | 91.33% | **92.46%** (+1.13%) | **0.09669** |
-| 🛠️ **Logic & Tool Calling** | 82.82% | **82.42%** | **0.21964** |
-| 📚 **General Knowledge** | 79.15% | **78.10%** | **0.27264** |
+| 💻 **Code (Domain Specialized)** | 91.34% | **94.76% (+3.42%)** | **0.07139** |
+| 🛠️ **Logic & Tool Calling** | 82.82% | **83.03% (+0.21%)** | **0.20622** |
+| 📚 **General Knowledge** | **79.15%** | 77.91% | 0.26436 |
 
 > **Key Observation**:
-> When moving from a toy linear projection to genuine SwiGLU non-linearities ($\text{SiLU}(W_{\text{gate}} x) \cdot W_{\text{up}} x$), late-layer KV projection becomes non-trivial, dropping from trivial ~99.9% to ~79–92%. This mathematically demonstrates why linear projectors experience representation collapse on dense reasoning and syntax.
-> 
-> Critically, on **Code**, the **Expert-Linked MoE Projector outperforms the dense baseline by +1.13% cosine alignment** (92.46% vs 91.33%) with significantly lower reconstruction error (0.09669 MSE), showing that inheriting base router routing helps isolate domain-specific features.
+> 1. **Why Linear Projectors Blur**: When evaluated against genuine SwiGLU non-linearities ($\text{SiLU}(W_{\text{gate}} x) \cdot W_{\text{up}} x$), linear models cannot model multiplicative gating, hitting a mathematical ceiling (~79% on general text and ~91% on code).
+> 2. **MoE Dominance on Code Tasks**: Scaling micro-experts to Rank 64 with GELU activations enables the **Expert-Linked MoE Projector to beat the dense baseline on Code by a substantial +3.42% margin (94.76% vs 91.34%)**, reducing reconstruction MSE from >0.11 down to **0.07139** (~35% error reduction).
+> 3. **Preserving Expert Independence**: Inheriting the base model's router routing allows code tokens to route into dedicated non-linear micro-expert subspaces rather than being blurred into a monolithic average projection.
 
 ### 2. Efficiency Characteristics (512-token prompt)
 * **Late-Layer Prefill Bypassed:** **~48.2%** of transformer block prefill compute bypassed (Layers 25–48).
-* **Active Parameters per Token:** **17.5M** (top-8 micro-experts out of 64).
-* **Projector Latency:** **<25 ms** on modern AVX-512 CPU execution.
+* **Active Parameters per Token:** **63.9M** (50.3M global base + 13.6M active top-8 micro-experts out of 64).
+* **Projector Latency:** Sub-millisecond per token on modern AVX-512 CPU execution.
 
 ---
 
