@@ -115,7 +115,7 @@ def train_and_compare(epochs=10):
     print("=======================================================")
     moe_model = ExpertLinkedMoEKVProjector()
     expert_params = [p for exp in moe_model.experts for p in exp.parameters()]
-    base_params = list(moe_model.shared_bypass_k.parameters()) + list(moe_model.shared_bypass_v.parameters()) + list(moe_model.norm.parameters())
+    base_params = list(moe_model.shared_bypass_k.parameters()) + list(moe_model.shared_bypass_v.parameters()) + list(moe_model.norm.parameters()) + [moe_model.expert_gain]
     optimizer_moe = torch.optim.AdamW([
         {'params': base_params, 'lr': LEARNING_RATE},
         {'params': expert_params, 'lr': LEARNING_RATE * 2.0}

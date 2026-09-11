@@ -72,16 +72,16 @@ We trained both a **Dense Linear Projector** (following Kishida's baseline) and 
 
 ### 1. Reconstruction Cosine Alignment by Domain (Unseen Test Set)
 
-| Domain Category | Dense Linear Projector | Expert-Linked MoE Projector (Rank 64) | MoE Reconstruction MSE |
+| Domain Category | Dense Linear Projector | Expert-Linked MoE Projector (Decoupled K/V) | MoE Reconstruction MSE |
 | :--- | :---: | :---: | :---: |
-| 💻 **Code (Domain Specialized)** | 91.34% | **94.76% (+3.42%)** | **0.07139** |
-| 🛠️ **Logic & Tool Calling** | 82.82% | **83.03% (+0.21%)** | **0.20622** |
-| 📚 **General Knowledge** | **79.15%** | 77.91% | 0.26436 |
+| 💻 **Code (Domain Specialized)** | 92.94% | **94.88% (+1.94%)** | **0.06995** |
+| 🛠️ **Logic & Tool Calling** | **85.48%** | 82.83% | 0.20783 |
+| 📚 **General Knowledge** | **82.28%** | 77.49% | 0.26817 |
 
 > **Key Observation**:
-> 1. **Why Linear Projectors Blur**: When evaluated against genuine SwiGLU non-linearities ($\text{SiLU}(W_{\text{gate}} x) \cdot W_{\text{up}} x$), linear models cannot model multiplicative gating, hitting a mathematical ceiling (~79% on general text and ~91% on code).
-> 2. **MoE Dominance on Code Tasks**: Scaling micro-experts to Rank 64 with GELU activations enables the **Expert-Linked MoE Projector to beat the dense baseline on Code by a substantial +3.42% margin (94.76% vs 91.34%)**, reducing reconstruction MSE from >0.11 down to **0.07139** (~35% error reduction).
-> 3. **Preserving Expert Independence**: Inheriting the base model's router routing allows code tokens to route into dedicated non-linear micro-expert subspaces rather than being blurred into a monolithic average projection.
+> 1. **Why Linear Projectors Blur**: Evaluated against non-linear SwiGLU forward passes, linear projections cannot capture multiplicative gating, plateauing on deep transformer representations.
+> 2. **MoE Superiority on Specialized Domains (Code)**: Decoupling the micro-experts into independent Key ($z_K$) and Value ($z_V$) projection pipelines achieved **94.88% cosine alignment** and dropped reconstruction MSE to **0.06995** on Code tokens, decisively outperforming the dense baseline.
+> 3. **The Specialization Trade-off**: Dense projectors update 100% of their parameters on every token, giving them higher sample efficiency on diffuse general conversational data. In contrast, MoE projectors route tokens sparsely into dedicated sub-spaces, preventing specialized syntax and algorithmic representations from being corrupted by general language distributions.
 
 ### 2. Efficiency Characteristics (512-token prompt)
 * **Late-Layer Prefill Bypassed:** **~48.2%** of transformer block prefill compute bypassed (Layers 25–48).

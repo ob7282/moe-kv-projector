@@ -34,23 +34,30 @@ class DenseLinearProjector(nn.Module):
 class MicroExpert(nn.Module):
     """
     Individual non-linear micro-expert paired 1:1 with a base model expert.
-    Uses GELU activation with scaled projection bottleneck.
+    Features decoupled K and V latent bottlenecks to eliminate cross-subspace interference.
     """
     def __init__(self, d_model=D_MODEL, d_kv=TOTAL_TARGET_KV_DIM, rank=PROJECTOR_RANK):
         super().__init__()
-        self.down = nn.Linear(d_model, rank, bias=False)
+        # Dedicated Key projection pipeline (retrieval address subspace)
+        self.down_k = nn.Linear(d_model, rank, bias=False)
         self.up_k = nn.Linear(rank, d_kv, bias=False)
-        self.up_v = nn.Linear(rank, d_kv, bias=False)
-        self.act = nn.GELU()
+        self.act_k = nn.GELU()
 
-        nn.init.kaiming_uniform_(self.down.weight, a=math.sqrt(5))
+        # Dedicated Value projection pipeline (information content subspace)
+        self.down_v = nn.Linear(d_model, rank, bias=False)
+        self.up_v = nn.Linear(rank, d_kv, bias=False)
+        self.act_v = nn.GELU()
+
+        nn.init.kaiming_uniform_(self.down_k.weight, a=math.sqrt(5))
+        nn.init.kaiming_uniform_(self.down_v.weight, a=math.sqrt(5))
         nn.init.normal_(self.up_k.weight, std=0.02)
         nn.init.normal_(self.up_v.weight, std=0.02)
 
     def forward(self, h):
-        z = self.act(self.down(h))
-        k = self.up_k(z)
-        v = self.up_v(z)
+        z_k = self.act_k(self.down_k(h))
+        z_v = self.act_v(self.down_v(h))
+        k = self.up_k(z_k)
+        v = self.up_v(z_v)
         return k, v
 
 
@@ -86,6 +93,9 @@ class ExpertLinkedMoEKVProjector(nn.Module):
         self.experts = nn.ModuleList([
             MicroExpert(d_model, d_kv, rank=rank) for _ in range(num_experts)
         ])
+
+        # Learnable per-expert adaptive gain
+        self.expert_gain = nn.Parameter(torch.ones(num_experts))
 
     def forward(self, h, router_weights=None):
         """
@@ -128,7 +138,7 @@ class ExpertLinkedMoEKVProjector(nn.Module):
                     continue
                 h_sub = h_flat[mask]
                 k_sub, v_sub = self.experts[exp_idx.item()](h_sub)
-                w_sub = weights_k[mask]
+                w_sub = weights_k[mask] * self.expert_gain[exp_idx.item()]
                 
                 expert_k.view(-1, base_k.shape[-1])[mask] += w_sub * k_sub
                 expert_v.view(-1, base_v.shape[-1])[mask] += w_sub * v_sub
