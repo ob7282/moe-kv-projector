@@ -1,0 +1,5 @@
+.venv/
+data/features/
+*.pt
+*.safetensors
+__pycache__/
