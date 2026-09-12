@@ -1,5 +1,8 @@
 .venv/
 data/features/
+data/mtp_features/
+models/
 *.pt
 *.safetensors
 __pycache__/
+

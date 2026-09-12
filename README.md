@@ -91,6 +91,27 @@ We trained both a **Dense Linear Projector** (following Kishida's baseline) and 
 
 ---
 
+## 🏎️ Part 2: Hybrid Micro-MoE Multi-Token Prediction (MTP) Drafter
+
+### The Speculative Decoding Bottleneck
+In modern models with native Multi-Token Prediction (like **DeepSeek-V3** and **Qwen 3.6 35B A3B MTP**), the base backbone is a sparse MoE, but the MTP drafting head is a **monolithic dense module** (`eh_proj` projection block). Because a small dense head averages predictions across all text, its draft proposals drift on domain-specialized tokens (tool calling, structured syntax), reducing speculative acceptance rates ($\alpha$).
+
+### Our Architecture: Hybrid Dense + Expert-Linked MTP Drafter
+We apply our expert-linked paradigm to speculative drafting:
+* **Dense Foundation Trunk (29.4M):** Captures global grammar and common conversational continuations.
+* **64 Micro-Draft Experts (32.6M active params):** Inherits top-$k$ router indices from the base model with **zero routing latency**, specializing in domain-specific token transitions.
+
+### Speculative Acceptance Benchmark (Unseen Test Set)
+
+| Domain Category | Dense Baseline Acceptance ($\alpha$) | Hybrid MoE Acceptance ($\alpha$) | Net Gain in $\alpha$ | Output Yield ($K=5$ tree) |
+| :--- | :---: | :---: | :---: | :---: |
+| 🛠️ **Logic & Tool Calling** | 51.00% | **60.33%** | **+9.33%** | **2.40x** (vs 2.00x) |
+| 📚 **General Knowledge** | 61.57% | **64.06%** | **+2.48%** | **2.59x** (vs 2.46x) |
+| 💻 **Overall Top-1 Accuracy** | 62.54% | **65.17%** | **+2.63%** | — |
+
+* **Single-Token Drafting Latency:** **~5.2 ms** on CPU AVX-512.
+* **Zero Routing Tax:** The drafter inherits base model routing weights directly, adding zero latency for expert dispatch.
+
 ## 🚀 Getting Started
 
 ### 1. Installation
