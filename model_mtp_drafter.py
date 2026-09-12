@@ -126,6 +126,21 @@ class HybridMoEMTPDrafter(nn.Module):
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         nn.init.normal_(self.lm_head.weight, std=0.02)
 
+        # Autoregressive micro-router transition for multi-step draft rollouts
+        self.router_transition = nn.Linear(d_model, num_experts, bias=False)
+        nn.init.normal_(self.router_transition.weight, std=0.01)
+
+    def transition_router(self, z, prev_r, beta=0.6):
+        """
+        Dynamically updates router weights during multi-step rollouts:
+        r_{t+1} = beta * prev_r + (1 - beta) * Softmax(W_trans * LayerNorm(z))
+        """
+        z_norm = self.head_norm(z)
+        r_step = F.softmax(self.router_transition(z_norm), dim=-1)
+        if prev_r is None:
+            return r_step
+        return beta * prev_r + (1.0 - beta) * r_step
+
     def forward(self, e, h, router_weights=None):
         """
         e: [B, T, D_MODEL] - Token embedding at position t
