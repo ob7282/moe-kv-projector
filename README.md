@@ -109,6 +109,24 @@ We apply our expert-linked paradigm to speculative drafting:
 | 📚 **General Knowledge** | 61.57% | **64.06%** | **+2.48%** | **2.59x** (vs 2.46x) |
 | 💻 **Overall Top-1 Accuracy** | 62.54% | **65.17%** | **+2.63%** | — |
 
+### Multi-Token Horizon Sweep ($N=1$ to $N=8$)
+
+Simulating multi-step autoregressive draft rollouts verified against ground-truth target prefixes across ~1,500 evaluation windows:
+
+| Draft Horizon ($N$) | Dense Baseline Yield | Hybrid MoE Yield | Relative Speedup Gain |
+| :---: | :---: | :---: | :---: |
+| **$N = 1$** | 1.66x | **1.68x** | **+0.88%** |
+| **$N = 2$** | 1.99x | **2.03x** | **+1.74%** |
+| **$N = 3$** | 2.19x | **2.23x** | **+2.01% (Peak Gain)** |
+| **$N = 4$** | 2.32x | **2.35x** | **+1.53%** |
+| **$N = 5$** | 2.41x | **2.43x** | **+0.80%** |
+| **$N = 6$** | 2.46x | **2.47x** | **+0.30%** |
+| **$N = 8$** | 2.53x | 2.52x | Plateau (Compounding drift) |
+
+> **Key Findings from the Sweep**:
+> 1. **Sweet Spot at $N=2\text{--}4$:** In real-world speculative serving (e.g. DeepSeek-V3 MTP), draft horizons of $N=2$ to $N=4$ offer the best trade-off between draft compute and verification yield. In this regime, the Hybrid MoE drafter consistently beats the dense baseline by up to **+2.01% overall yield** and **+5% to +7% on logic/tool-calling**.
+> 2. **Diminishing Returns Beyond $N \ge 6$:** For both drafters, unguided multi-step self-rollouts encounter compounding probability decay, flattening overall yield around $\sim 2.5\times$ tokens per verification pass.
+
 * **Single-Token Drafting Latency:** **~5.2 ms** on CPU AVX-512.
 * **Zero Routing Tax:** The drafter inherits base model routing weights directly, adding zero latency for expert dispatch.
 
