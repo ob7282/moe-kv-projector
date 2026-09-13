@@ -1,6 +1,6 @@
-# Expert-Linked MoE KV Projector (LLKVApprox-MoE)
+# Expert-Linked MoE KV Projector & Hybrid MTP Drafter (LLKVApprox-MoE)
 
-> **Extending Late-Layer KV Approximation to Mixture-of-Experts Models via Co-Routed Low-Rank Projectors**
+> **Extending Late-Layer KV Approximation and Hybrid Multi-Token Prediction (MTP) to Mixture-of-Experts Models via Co-Routed Low-Rank Projectors & Micro-MoE Drafters**
 
 [![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
 [![PyTorch 2.x](https://img.shields.io/badge/PyTorch-2.x-orange.svg)](https://pytorch.org/)
