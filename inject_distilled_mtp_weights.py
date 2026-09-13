@@ -5,7 +5,7 @@ import gguf
 from pathlib import Path
 
 GGUF_PATH = Path(r'C:\LocalAI\models\Qwen3.6-35B-A3B-MTP-UD-Q4_K_M.gguf')
-CKPT_PATH = Path(r'C:\Projects\moe-kv-projector\models\hybrid_moe_mtp_advanced.pt')
+CKPT_PATH = Path(r'C:\Projects\moe-kv-projector\models\hybrid_moe_mtp_finetuned.pt')
 BAK_PATH = Path(r'C:\LocalAI\models\blk40_original_weights.bak')
 
 print('[1/4] Reading GGUF tensor offsets...')

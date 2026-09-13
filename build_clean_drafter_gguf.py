@@ -1,4 +1,4 @@
-# Build clean standalone MTP draft GGUF
+# Build clean standalone MTP draft GGUF without token_type
 import torch
 import numpy as np
 import gguf
@@ -53,9 +53,6 @@ if 'tokenizer.ggml.pre' in reader.fields:
 if 'tokenizer.ggml.tokens' in reader.fields:
     tokens = [bytes(part) for part in reader.fields['tokenizer.ggml.tokens'].parts]
     writer.add_token_list(tokens)
-if 'tokenizer.ggml.token_type' in reader.fields:
-    types = [int(x) for x in reader.fields['tokenizer.ggml.token_type'].parts[-1]]
-    writer.add_token_types(types)
 if 'tokenizer.ggml.merges' in reader.fields:
     merges = [bytes(part) for part in reader.fields['tokenizer.ggml.merges'].parts]
     writer.add_token_merges(merges)
