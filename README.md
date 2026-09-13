@@ -2,6 +2,8 @@
 
 > **Extending Late-Layer KV Approximation and Hybrid Multi-Token Prediction (MTP) to Mixture-of-Experts Models via Co-Routed Low-Rank Projectors & Micro-MoE Drafters**
 
+> **Status:** Exploratory proof-of-concept / experimental lab notes. Tested locally on consumer hardware (AMD Ryzen Zen 4 APU / Radeon 780M) to investigate whether router-linked micro-experts can mitigate domain specialization drift in late-layer KV projection and speculative MTP drafting.
+
 [![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
 [![PyTorch 2.x](https://img.shields.io/badge/PyTorch-2.x-orange.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -68,9 +70,11 @@ Rather than using one generic linear projection matrix, this approach creates a 
 
 ## 📊 Experimental Results
 
-We trained both a **Dense Linear Projector** (following Kishida's baseline) and the **Expert-Linked MoE Projector** on feature activations harvested from genuine non-linear SwiGLU forward passes across multi-domain prompts (Code, Logic/Tools, General Knowledge):
+We trained both a **Dense Linear Projector** (following Kishida's baseline) and the **Expert-Linked MoE Projector** on feature activations harvested from non-linear SwiGLU forward passes across multi-domain prompts (Code, Logic/Tools, General Knowledge):
 
-### 1. Reconstruction Cosine Alignment by Domain (Unseen Test Set)
+### 1. Reconstruction Cosine Alignment by Domain (Held-Out Test Set)
+
+*(Evaluated on a held-out split of 500 prompts from our synthetic multi-domain corpus in `data/curated_prompts.jsonl` covering Python AST, JSON tool calls, and general QA).*
 
 | Domain Category | Dense Linear Baseline | Hybrid Shared-Base + Deep-Specialist | Gain vs Dense | MoE Reconstruction MSE |
 | :--- | :---: | :---: | :---: | :---: |
@@ -78,11 +82,11 @@ We trained both a **Dense Linear Projector** (following Kishida's baseline) and 
 | 🛠️ **Logic & Tool Calling** | 85.49% | **89.10%** | **+3.61%** | **0.14008** |
 | 📚 **General Knowledge** | 82.28% | **85.20%** | **+2.92%** | **0.18972** |
 
-> **Key Takeaway: Eliminating the Specialization Trade-off**:
-> By uniting a **Full-Capacity 1.0x Shared Linear Base** with **Deep 2-Layer Residual Specialists** (with decoupled $K$ and $V$ pathways), the model achieves strict **Pareto dominance across all domains**:
-> 1. **General Knowledge**: Never regresses, climbing from **82.28% to 85.20% (+2.92%)** because the full global foundation anchors broad language.
-> 2. **Logic & Tool Calling**: Jumps from **85.49% to 89.10% (+3.61%)**.
-> 3. **Code (The Kishida Blur Problem)**: Climbs to **97.42% (+4.48%)**, cutting reconstruction MSE by **~70%** (from $>0.11$ down to **0.03395**). Non-linear AST structures and lexical scopes are precisely preserved by the deep specialist fleet.
+> **Observed Trade-offs on Local Test Prompts**:
+> Combining a shared linear base with low-rank specialists helped retain domain specialization in our local test set:
+> 1. **General Knowledge**: Maintained general baseline alignment, moving from 82.28% to 85.20% (+2.92%).
+> 2. **Logic & Tool Calling**: Moved from 85.49% to 89.10% (+3.61%).
+> 3. **Code (The Kishida Blur Problem)**: Improved from 92.94% to 97.42% (+4.48%), reducing reconstruction MSE from >0.11 down to 0.03395. Low-rank specialists helped mitigate the syntax degradation observed with a single unconditioned linear projection.
 
 ### 2. Efficiency Characteristics (512-token prompt)
 * **Late-Layer Prefill Bypassed:** **~48.2%** of transformer block prefill compute bypassed (Layers 25–48).
@@ -101,7 +105,9 @@ We apply our expert-linked paradigm to speculative drafting:
 * **Dense Foundation Trunk (29.4M):** Captures global grammar and common conversational continuations.
 * **64 Micro-Draft Experts (32.6M active params):** Inherits top-$k$ router indices from the base model with **zero routing latency**, specializing in domain-specific token transitions.
 
-### Speculative Acceptance Benchmark (Unseen Test Set)
+### Speculative Acceptance Benchmark (Held-Out Test Split)
+
+*(Evaluated across ~1,500 simulated multi-token rollout windows from the held-out prompt split).*
 
 | Domain Category | Dense Baseline Acceptance ($\alpha$) | Hybrid MoE Acceptance ($\alpha$) | Net Gain in $\alpha$ | Output Yield ($K=5$ tree) |
 | :--- | :---: | :---: | :---: | :---: |
@@ -123,8 +129,8 @@ Simulating multi-step autoregressive draft rollouts verified against ground-trut
 | **$N = 6$** | 2.46x | **2.47x** | **+0.30%** |
 | **$N = 8$** | 2.53x | 2.52x | Plateau (Compounding drift) |
 
-> **Key Findings from the Sweep**:
-> 1. **Sweet Spot at $N=2\text{--}4$:** In real-world speculative serving (e.g. DeepSeek-V3 MTP), draft horizons of $N=2$ to $N=4$ offer the best trade-off between draft compute and verification yield. In this regime, the Hybrid MoE drafter consistently beats the dense baseline by up to **+2.01% overall yield** and **+5% to +7% on logic/tool-calling**.
+> **Observations from the Sweep**:
+> 1. **Sweet Spot at $N=2\text{--}4$:** In speculative serving, draft horizons of $N=2$ to $N=4$ offered the most practical trade-off between draft compute and verification yield on these test prompts, outperforming the dense baseline by up to +2.01% overall yield and +5% to +7% on logic/tool-calling.
 > 2. **Diminishing Returns Beyond $N \ge 6$:** For both drafters, unguided multi-step self-rollouts encounter compounding probability decay, flattening overall yield around $\sim 2.5\times$ tokens per verification pass.
 
 * **Single-Token Drafting Latency:** **~5.2 ms** on CPU AVX-512.
@@ -132,16 +138,16 @@ Simulating multi-step autoregressive draft rollouts verified against ground-trut
 
 ---
 
-## 🏆 Part 3: Production Deployment & Real-World Hardware Benchmarks (Qwen 3.6 35B A3B)
+## Part 3: Production Prototype & Hardware Benchmarks (Qwen 3.6 35B A3B)
 
-We transitioned this research from offline PyTorch simulations to a **production-grade deployment on AMD Radeon 780M iGPU (Zen 4 APU / 32GB UMA BIOS VRAM / 64GB Dual-Rank DDR5-5600)** running against `Qwen3.6-35B-A3B-MTP-UD-Q4_K_M.gguf`.
+We transitioned this experiment from offline PyTorch simulations to a **local prototype deployment on an AMD Radeon 780M iGPU (Zen 4 APU / 32GB UMA BIOS VRAM / 64GB Dual-Rank DDR5-5600)** running against `Qwen3.6-35B-A3B-MTP-UD-Q4_K_M.gguf`.
 
 We evaluated three distinct configurations under identical real-world serving conditions:
 1. **Standard Base (Unassisted / No Speculation)**: Standard 48-layer autoregressive decode without drafting.
 2. **Stock Inbuilt MTP (Official llama.cpp)**: Native linear multi-token prediction head (`eh_proj`), standard 48-layer prefill, rigid rejection without alternative candidate branch rescue.
 3. **Fully Optimised Version (Our Hybrid MoE MTP + Layer-24 Skip + Tree-2-2 Rescue Fork)**:
    - **Weight Injection:** Learned Rank-128 residual adapter distilled from teacher representations folded directly into Block 40 `eh_proj` in-place inside the GGUF at `Q8_0` precision.
-   - **Prefill Skipping:** `LLAMA_MOE_PREFILL_SKIP_LAYER=24` bypasses late layers during prompt processing with **100.0% exact match output fidelity**.
+   - **Prefill Skipping:** `LLAMA_MOE_PREFILL_SKIP_LAYER=24` bypasses late layers during prompt processing.
    - **Speculative Tree Rescue:** Custom C++ engine in `llama.cpp-fork` (`common/speculative.cpp`, commit `d9daeab`) that rescues alternative token candidates (`alt_id` + `alt_c`) upon primary branch verification failure, resolving Vulkan backend sampler constraints.
 
 ---
@@ -152,41 +158,43 @@ All tests executed locally on the AMD Radeon 780M APU under Vulkan with FP16 KV 
 
 | Metric / Evaluation Mode | Standard Base (Unassisted) | Stock Inbuilt MTP (Official) | Fully Optimised Version (Our Hybrid MoE) | Impact / Advantage |
 | :--- | :---: | :---: | :---: | :--- |
-| ⚡ **Burst Prefill (`pp512`)** | `362.16 t/s` | `362.16 t/s` | **`528.64 ± 4.90 t/s`** 🏆 | **+46.0% faster prefill** via Layer-24 Skip |
-| ⚡ **Deep Context Prefill (`pp4096`)** | `374.49 t/s` | `374.49 t/s` | **`488.15 ± 1.38 t/s`** 🏆 | **+30.4% faster prefill** on long prompts |
-| 🚀 **Base Engine Decode (`tg64`)** | `24.18 t/s` | `24.18 t/s` | **`24.27 ± 0.05 t/s`** | Zero regression on base engine throughput |
-| 🚀 **Base Engine Decode (`tg128`)** | `24.31 t/s` | `24.31 t/s` | **`23.48 ± 0.06 t/s`** | Consistent multi-token baseline |
-| 💻 **Predictable Code Generation** | `22.8 t/s` | `30.3 t/s` | **`29.5 t/s`** | Both MTP drafters deliver fast syntax drafting |
-| 🧠 **Branching Logic & Deep Reasoning** | `22.7 t/s` | **`15.3 – 26.6 t/s` (COLLAPSE)** | **`31.7 t/s`** ⚡ | **+107% faster than Stock MTP** (eliminates false-rejection stall) |
-| 📊 **Average Real-World Decode** | `22.8 t/s` | `24.8 t/s` | **`30.1 t/s`** 🏆 | **+21.4% over Stock MTP, +32% over Base** |
-| 💾 **VRAM Overhead** | `21.10 GiB` | `21.10 GiB` | **`21.10 GiB`** (0 MB added) | Zero VRAM penalty via in-place GGUF weight folding |
-| 🎯 **Output Quality Fidelity** | 100.0% | 100.0% | **100.0% Exact Match** | 0.0000 perplexity / greedy token deviation |
+| **Burst Prefill (`pp512`)** | `362.16 t/s` | `362.16 t/s` | **`528.64 ± 4.90 t/s`** | **+46.0% faster prefill** via Layer-24 Skip |
+| **Deep Context Prefill (`pp4096`)** | `374.49 t/s` | `374.49 t/s` | **`488.15 ± 1.38 t/s`** | **+30.4% faster prefill** on long prompts |
+| **Base Engine Decode (`tg64`)** | `24.18 t/s` | `24.18 t/s` | **`24.27 ± 0.05 t/s`** | Zero regression on base engine throughput |
+| **Base Engine Decode (`tg128`)** | `24.31 t/s` | `24.31 t/s` | **`23.48 ± 0.06 t/s`** | Consistent multi-token baseline |
+| **Predictable Code Generation** | `22.8 t/s` | `30.3 t/s` | **`29.5 t/s`** | Both MTP drafters deliver fast syntax drafting |
+| **Branching Logic & Deep Reasoning** | `22.7 t/s` | **`15.3 – 26.6 t/s` (Stall)** | **`31.7 t/s`** | **+107% faster than Stock MTP** (avoids false-rejection stall) |
+| **Average Real-World Decode** | `22.8 t/s` | `24.8 t/s` | **`30.1 t/s`** | **+21.4% over Stock MTP, +32% over Base** |
+| **VRAM Overhead** | `21.10 GiB` | `21.10 GiB` | **`21.10 GiB`** (0 MB added) | Zero VRAM penalty via in-place GGUF weight folding |
+| **Greedy Token Match (temp=0.0)\*** | Exact match | Exact match | **Exact match** | Intermediate representations stay within argmax margin |
+
+*\*Note on Fidelity:* On our deterministic greedy test prompts (e.g. LRU cache, Sieve of Eratosthenes up to 96 tokens), top-1 generated tokens matched the un-skipped baseline exactly because intermediate representations stayed within the argmax decision boundary. Layer skipping is inherently an approximation technique; under non-zero sampling temperatures or large-scale perplexity benchmarks, representation drift is expected.
 
 ---
 
-### Key Architectural Insights
+### Observed Failure Mode & Mitigation
 
-#### 1. Why Stock Inbuilt MTP Collapses on Complex Reasoning
+#### 1. Why Stock Inbuilt MTP Stalls on Complex Reasoning
 On formulaic code, stock linear drafting achieves `30.3 tok/s`. However, during complex multi-step reasoning, mathematical derivations, or recursive edge cases:
-- A single rejected token causes the **entire remaining draft chain to be thrown away**.
+- A single rejected token causes the **entire remaining draft chain to be discarded**.
 - The base model is repeatedly forced to backtrack, stalling the memory bus with redundant re-verification passes.
-- Throughput drops from `24.18 tok/s` down to **`15.3 tok/s`** (substantially slower than not using speculative decoding at all).
+- Throughput drops from `24.18 tok/s` down to **`15.3 tok/s`** (slower than unassisted decoding).
 
-#### 2. How Our Hybrid MoE + Tree-2-2 Rescue Solves It
-- **Branch Rescue:** When the primary draft token fails verification, our engine inspects the secondary high-probability alternative token (`alt_id`) and immediately tests whether it rescues the continuation tree.
-- **Micro-MoE Routing Affinity:** Distilled Block 40 micro-experts maintain sharp domain routing, keeping speculative acceptance rates above 68% even through high-entropy decision boundaries.
-- **The Result:** Instead of collapsing to `15.3 tok/s`, our engine accelerates to **`31.7 tok/s`** on the exact same complex reasoning prompts.
+#### 2. How Hybrid MoE + Tree-2-2 Rescue Mitigates It
+- **Branch Rescue:** When the primary draft token fails verification, our engine inspects the secondary candidate token (`alt_id`) and immediately tests whether it rescues the continuation branch.
+- **Routing Conditioning:** Distilled Block 40 micro-experts maintain domain-conditioned projections, keeping speculative acceptance rates around ~68% through branching decision points.
+- **Result:** Instead of dropping to `15.3 tok/s`, generation sustains **`31.7 tok/s`** on the same reasoning prompt.
 
 ---
 
-### Position Across the Complete Local Model Fleet
+### Comparison Across Local Test Configurations
 
-| Model | Architecture | Active / Total Params | Burst Prefill (`pp512`) | Deep Prefill (`pp4096`) | Real-World Generation Decode |
+| Model / Configuration | Architecture | Active / Total Params | Burst Prefill (`pp512`) | Deep Prefill (`pp4096`) | Real-World Generation Decode |
 | :--- | :--- | :---: | :---: | :---: | :---: |
-| 🥇 **Qwen 3.6 35B (Fully Optimised)** | **Hybrid MoE MTP + Tree-2-2** | **~3.5B / 35.5B** | **`528.64 t/s`** 🏆 | **`488.15 t/s`** 🏆 | **`28.4 – 31.7 t/s`** ⚡ *(Avg: **30.1 t/s**)* |
-| 🥈 **Gemma 4 26B QAT** | Dense + QAT | ~26B / 26B | `401.62 t/s` | `326.06 t/s` | `27.98 t/s` |
-| 🥉 **Ornith 1.5 35B MoE** | MoE + N-Gram | ~3.5B / 35.5B | `376.48 t/s` | `361.99 t/s` | `28.58 t/s` |
-| 4. **Qwen 3.6 35B (Stock Inbuilt MTP)** | MoE + Linear MTP | ~3.5B / 35.5B | `362.16 t/s` | `374.49 t/s` | `24.8 t/s` *(Collapses to 15.3 t/s on reasoning)* |
+| 1. **Qwen 3.6 35B (Fully Optimised)** | **Hybrid MoE MTP + Tree-2-2** | **~3.5B / 35.5B** | **`528.64 t/s`** | **`488.15 t/s`** | **`28.4 – 31.7 t/s`** *(Avg: **30.1 t/s**)* |
+| 2. **Gemma 4 26B QAT** | Dense + QAT | ~26B / 26B | `401.62 t/s` | `326.06 t/s` | `27.98 t/s` |
+| 3. **Ornith 1.5 35B MoE** | MoE + N-Gram | ~3.5B / 35.5B | `376.48 t/s` | `361.99 t/s` | `28.58 t/s` |
+| 4. **Qwen 3.6 35B (Stock Inbuilt MTP)** | MoE + Linear MTP | ~3.5B / 35.5B | `362.16 t/s` | `374.49 t/s` | `24.8 t/s` *(Drops to 15.3 t/s on reasoning)* |
 | 5. **Qwen 3.6 35B (Standard Base)** | MoE (Unassisted) | ~3.5B / 35.5B | `362.16 t/s` | `374.49 t/s` | `24.18 t/s` |
 | 6. **Ternary Bonsai 27B** | 2-Bit Quant | ~27B / 27B | `100.25 t/s` | `93.57 t/s` | `8.35 t/s` |
 | 7. **Qwen 3.8 27B Dense** | Dense FP16/Q4 | ~27B / 27B | `51.42 t/s` | `48.61 t/s` | `5.86 t/s` *(External MTP)* |
