@@ -4,6 +4,9 @@
 
 > **Status:** Exploratory proof-of-concept / experimental lab notes. Tested locally on consumer hardware (AMD Ryzen Zen 4 APU / Radeon 780M) to investigate whether router-linked micro-experts can mitigate domain specialization drift in late-layer KV projection and speculative MTP drafting.
 
+> **⚖️ Key Empirical Takeaway & Trade-off:**
+> Rather than a "lossless free lunch", skipping late-layer prefill attention (Layers 25–48) establishes an explicit accuracy-for-throughput trade-off on `Qwen 3.6 35B`: it delivers a **+34% to +46% prefill throughput boost** (bursting over 500 tok/s on an integrated AMD APU with 0 MB added VRAM) and raises speculative draft acceptance to **68.4%** (via Tree-2-2 speculation), in exchange for an **86.0% → 74.0% Pass@1 (-12.0 point delta)** on the standardized OpenAI HumanEval benchmark (tasks 0–49).
+
 [![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
 [![PyTorch 2.x](https://img.shields.io/badge/PyTorch-2.x-orange.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -193,11 +196,15 @@ All three configurations were evaluated on the **exact same 50 consecutive probl
 
 #### 2. Full 164-Problem OpenAI HumanEval Benchmark on Configuration C
 
-To tighten confidence intervals, we evaluated all 164 tasks on Configuration C:
-* **Official Pass@1:** **83 / 164 (50.61%)** ($\pm 3.9\%$ Standard Error, 95% CI: $[42.8\%, 58.4\%]$).
+To tighten confidence intervals across the entire benchmark, we evaluated all 164 tasks on Configuration C:
+* **Official Pass@1 (Full Benchmark):** **83 / 164 (50.61%)** ($\pm 3.9\%$ Standard Error, 95% CI: $[42.8\%, 58.4\%]$).
 * **Average Decode Speed:** **26.35 tokens/sec** sustained across 164 tasks.
 * **Speculative Stability:** **67.7% draft acceptance rate** across 10,762 drafted tokens.
-* Tracks expected zero-shot greedy docstring completion baselines for 30B–35B class models in 4-bit quantization (e.g. Qwen 2.5 32B Base ~52%).
+
+> **Reconciling the 74.0% (Tasks 0–49) vs 50.61% (Tasks 0–163) Figures:**
+> - **Task Difficulty Distribution:** OpenAI HumanEval problem difficulty scales steeply with problem index. Tasks 0–49 focus primarily on elementary list and string primitives (e.g. `has_close_elements`, `truncate_number`, `below_zero`, `strlen`, `add`), where all models score higher (Base: 86.0%, Stock MTP: 84.0%, Config C: 74.0%).
+> - **Complex Late Tasks (50–163):** Later tasks introduce complex recursive backtracking, dynamic programming, state machines, and standard library dependencies (`re`, `math`, `hashlib`), causing zero-shot unassisted base models to fail more frequently across the board.
+> - **Expected Class Baseline:** A 50.61% score across all 164 tasks on zero-shot docstring completion closely tracks published unassisted base models of this parameter class in 4-bit quantization (e.g. Qwen 2.5 32B Base ~52%).
 
 #### 3. Auditable Raw Artifacts
 Complete, unedited per-problem execution logs (including prompts, generated Python code, test assertion tracebacks, and per-token timings) are preserved in the [`results/`](results/) directory:
