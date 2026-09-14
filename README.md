@@ -7,7 +7,7 @@
 > **⚖️ Key Empirical Takeaway & Trade-off:**
 > Rather than a "lossless free lunch", late-layer prefill acceleration in Mixture-of-Experts models establishes an explicit accuracy-for-throughput trade-off on `Qwen 3.6 35B`. Crucially, **purely skipping attention and synthesizing KV states causes code generation to collapse (2.0% Pass@1) due to Variable Blindness**.
 > By instead retaining authentic token-binding attention and replacing the 8 heavy routed specialists with the **Shared Base SwiGLU Expert (1.0x capacity)** or **Top-4 Sparsity ($K=4$)**, this architecture delivers:
-> 1. **Zero-Loss Parity ($K=4$, Skip-24/32):** Saves 50% of upper-layer routed MoE compute while matching Base Unassisted at **86.0% Pass@1** (50 tasks) and **63.41% Pass@1** across the full 164 tasks (within 3 tasks of Base 65.24%).
+> 1. **High-Fidelity Sparsity ($K=4$, Skip-32):** Saves 50% of upper-layer routed MoE compute while achieving **63.41% Pass@1** across the full 164 tasks (**within 1.83% or -3 tasks of Base 65.24%**), failing only 3 tasks that Base passed across the entire suite. (On Skip-24, $K=4$ achieves **62.80% Pass@1**, within 2.44% or -4 tasks of Base, while saving 50% routed compute across 24 layers).
 > 2. **Peak Throughput ($K=0$, Skip-32):** Delivers **+18.0% prefill throughput boost** while scoring **64.02% across all 164 tasks** (within 1.2% of Base), recovering **71.4% of the performance lost** under plain layer skipping.
 > 3. **Speculative Decoding:** Raises speculative draft acceptance to **68.4%** via Tree-2-2 speculation, eliminating reasoning stalls.
 
@@ -190,7 +190,7 @@ All configurations were evaluated on the **exact same 50 consecutive problems (`
 | Configuration | Architecture & Settings | Official Pass@1 ($N=50$) | Decode Speed | Prefill Throughput (`pp512`) | Draft Acceptance Rate ($\alpha$) |
 | :--- | :--- | :---: | :---: | :---: | :---: |
 | **Config A: Standard Base** | Qwen 3.6 35B Base (Unassisted, No Skip, No MTP) | **43 / 50 (86.0%)** | 23.14 tok/s | 299.5 tok/s | N/A |
-| **Conservative Preset (Skip-32)** | **Layer-32 Skip (Unassisted, No Spec)** | **43 / 50 (86.0%)** 🎯 | 23.47 tok/s | **352.0 tok/s** *(+17.5%)* | N/A (100% Base Accuracy Parity) |
+| **Conservative Preset (Plain Skip-32)** | **Layer-32 Plain Residual Skip (No Spec)** | **43 / 50 (86.0%)** | 23.47 tok/s | **352.0 tok/s** *(+17.5%)* | N/A (Matches Base on n=50 sample; drops to 60.98% / -4.27% on full 164) |
 | **Balanced Preset (Skip-28)** | **Layer-28 Skip (Unassisted, No Spec)** | **38 / 50 (76.0%)** | 23.38 tok/s | **373.6 tok/s** *(+24.7%)* | N/A (Optimal mid-curve inflection) |
 | **Config B: Stock MTP** | Official llama.cpp (Linear Draft $N=4, p_{min}=0.0$, No Skip) | **42 / 50 (84.0%)** | **28.42 tok/s** | 362.2 tok/s | **62.4%** (1451 / 2324 tok) |
 | **Skip-24 (No Speculation)** | Layer-24 Skip (Unassisted, isolates KV skip) | **38 / 50 (76.0%)** | 23.48 tok/s | **400.5 tok/s** *(+33.7%)* | N/A (Isolates pure KV skip impact) |
@@ -200,7 +200,7 @@ All configurations were evaluated on the **exact same 50 consecutive problems (`
 > 1. **Baseline Inherent Limits (46.2% of C's failures):** Out of the 13 failures in Config C, **6 tasks (`HumanEval/20, 26, 32, 37, 38, 39`) ALSO failed in Config A**, representing fundamental base model reasoning limitations (e.g. polynomial root-finding, cyclic ciphers) rather than skip degradation.
 > 2. **Isolating the Speculative Rescue Mechanism:** Evaluating Skip-24 *without* speculative decoding scored **38 / 50 (76.0%)**. This confirms that the Tree-2-2 rescue heuristic contributed only **1 task flip** (`HumanEval/49`, which passed under unassisted decoding), with the remaining 5 task flips driven by the Layer-24 KV approximation.
 > 3. **The Empirical Operating Curve:**
->    - **Conservative Preset (`LLAMA_MOE_PREFILL_SKIP_LAYER=32`):** **86.0% Pass@1 (100% Base parity / 0.0% loss)** + **352.0 tok/s prefill (+17.5%)**.
+>    - **Conservative Preset (`LLAMA_MOE_PREFILL_SKIP_LAYER=32`, Plain Residual Skip):** **86.0% Pass@1 on n=50** (matches Base on the initial sample, but incurs a real -4.27% / 7-task cost on the full 164 tasks) + **352.0 tok/s prefill (+17.5%)**.
 >    - **Balanced Preset (`LLAMA_MOE_PREFILL_SKIP_LAYER=28`):** **76.0% Pass@1 (-10 pt delta)** + **373.6 tok/s prefill (+24.7%)**.
 >    - **Aggressive Preset (`LLAMA_MOE_PREFILL_SKIP_LAYER=24`):** **74.0% Pass@1 (-12 pt delta)** + **400–528 tok/s prefill (+34% to +46%)** + **Tree-2-2 speculative decode (27–31 tok/s)**.
 
@@ -421,9 +421,9 @@ To explore intermediate capacity, we implemented `LLAMA_MOE_PREFILL_EXPERTS_USED
 1. **Maximum Speed Mode (`LLAMA_MOE_PREFILL_SKIP_LAYER=24`, `LLAMA_MOE_PREFILL_EXPERTS_USED=0`):**
    - Evaluates only the Shared Base Expert across layers 25–48.
    - Yields **+31.5% prefill throughput boost** with **84.0% Pass@1** (only 1 task behind Base).
-2. **Zero-Loss Balanced Mode (`LLAMA_MOE_PREFILL_SKIP_LAYER=24`, `LLAMA_MOE_PREFILL_EXPERTS_USED=4`):**
-   - Evaluates Top-4 Routed Specialists + Shared Base Expert across layers 25–48.
-   - Reduces routed MoE compute by **50%** across the top half of the network while retaining **exact 100.0% accuracy parity (86.0% Pass@1 on 50 tasks, 103/164 overall)**.
+2. **Balanced Sparsity Mode (`LLAMA_MOE_PREFILL_SKIP_LAYER=24` or `32`, `LLAMA_MOE_PREFILL_EXPERTS_USED=4`):**
+   - Evaluates Top-4 Routed Specialists + Shared Base Expert across skipped prefill layers.
+   - Reduces routed MoE compute by **50%** across skipped layers, achieving **63.41% Pass@1 on Skip-32** (within 1.83% or -3 tasks of Base 65.24%) and **62.80% Pass@1 on Skip-24** (within 2.44% or -4 tasks of Base, recovering 11 tasks broken under $K=0$).
 3. **Conservative High-Fidelity Mode (`LLAMA_MOE_PREFILL_SKIP_LAYER=32`, `LLAMA_MOE_PREFILL_EXPERTS_USED=0`):**
    - Delivers **64.02% Pass@1 across all 164 tasks** (within 1.2% of Base) with a steady **+18.0% prefill speedup**.
 
@@ -469,7 +469,7 @@ Run with our optimized runtime parameters depending on your deployment target:
 set LLAMA_MOE_PREFILL_SKIP_LAYER=24
 set LLAMA_MOE_PROJECTOR_MODE=shared
 
-# Option 2: Zero-Loss Balanced Mode (50% MoE compute savings, 100% Base Accuracy Parity)
+# Option 2: Balanced Sparsity Mode (50% MoE compute savings, within 2.4% of Base across 164 tasks)
 set LLAMA_MOE_PREFILL_SKIP_LAYER=24
 set LLAMA_MOE_PREFILL_EXPERTS_USED=4
 
